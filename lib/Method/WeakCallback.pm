@@ -1,6 +1,6 @@
 package Method::WeakCallback;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use 5.010;
 use strict;
@@ -11,27 +11,42 @@ use Carp;
 
 require Exporter;
 our @ISA = qw(Exporter);
-our @EXPORT_OK = qw(_weak_cb weak_method_callback weak_method_callback_cached);
+our @EXPORT_OK = qw( weak_method_callback weak_method_callback_cached
+                     weak_method_callback_static);
 
 sub weak_method_callback {
     my ($object, $method, @args) = @_;
     croak 'Usage: weak_method_callback($object, $method, @args)'
         unless defined $method;
     weaken $object;
-    sub { $object ? $object->$method(@args, @_) : () };
+    sub { defined($object) ? $object->$method(@args, @_) : () };
 }
 
-fieldhash our %cache;
+fieldhash our %cached;
 sub weak_method_callback_cached {
     my ($object, $method) = @_;
     croak 'Usage: weak_method_callback_cached($object, $method)'
         if @_ > 2 or !defined $method;
 
-    weaken $object;
-    $cache{$object}{$method} ||= sub { $object ? $object->$method(@_) : () };
+    $cached{$object}{$method} ||= do {
+        weaken $object;
+        sub { defined($object) ? $object->$method(@_) : () };
+    };
 }
 
-*_weak_cb = \&weak_method_callback_cached;
+fieldhash our %static;
+sub weak_method_callback_static {
+    my ($object, $method) = @_;
+    croak 'Usage: weak_method_callback_cached($object, $method)'
+        if @_ > 2 or !defined $method;
+
+    $static{$object}{$method} ||= do {
+        weaken $object;
+        my $sub = $object->can($method)
+            or croak "object $object does not have method '$method'";
+        sub { defined($object) ? $sub->($object, @_) : () };
+    };
+}
 
 1;
 
@@ -54,18 +69,18 @@ Method::WeakCallback - Call back object methods through weak references.
                         weak_method_callback($obj, 'on_timeout'));
   }
 
-  sub on_timeout { say "Timedout!" }
+  sub on_timeout { say "Time out!" }
 
 
 =head1 DESCRIPTION
 
 When writtin programs mixing event programming with OOP, it is very
-usual to employ callbacks that just call some method on some
+common to employ callbacks that just call some method on some
 object. I.e.:
 
   $w = AE::io($fh, 0, sub { $obj->data_available_for_reading });
 
-Unfortunately, this style can result in the creation of ciclid data
+Unfortunately, this style can result in the creation of cyclic data
 structures that never get freed.
 
 For instance consider the following code:
@@ -104,13 +119,12 @@ C<weak_method_callback_cached> does not accept extra arguments.
 
 None by default.
 
-The subroutines C<weak_method_callback> and C<weak_method_callback_cached> can be imported from this module.
-
-C<_weak_cb> is an alias for C<weak_method_callback_cached> that can also be imported.
+The subroutines C<weak_method_callback> and
+C<weak_method_callback_cached> can be imported from this module.
 
 =head1 SEE ALSO
 
-L<AnyEvent>.
+L<curry>, L<AnyEvent>.
 
 =head1 AUTHOR
 
